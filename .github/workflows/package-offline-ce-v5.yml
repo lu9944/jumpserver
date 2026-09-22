@@ -1,0 +1,89 @@
+name: Package JumpServer CE v5.0.0 offline x86_64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      PACKAGE_NAME: jumpserver-ce-v5.0.0-x86_64
+
+    steps:
+      - name: Checkout packaging script
+        uses: actions/checkout@v6
+
+      - name: Install zstd
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends zstd
+          df -h .
+
+      - name: Download verified upstream installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/installer-download"
+          gh release download v5.0.0 \
+            --repo jumpserver/installer \
+            --pattern 'jumpserver-installer-v5.0.0.tar.gz*' \
+            --dir "${RUNNER_TEMP}/installer-download"
+          (
+            cd "${RUNNER_TEMP}/installer-download"
+            sha256sum --check jumpserver-installer-v5.0.0.tar.gz.sha256
+          )
+          tar -xzf "${RUNNER_TEMP}/installer-download/jumpserver-installer-v5.0.0.tar.gz" -C "${RUNNER_TEMP}"
+          mv "${RUNNER_TEMP}/jumpserver-installer-v5.0.0" "${RUNNER_TEMP}/${PACKAGE_NAME}"
+
+      - name: Package and verify eight offline images
+        run: |
+          bash .github/scripts/package-offline-ce-v5.sh package "${RUNNER_TEMP}/${PACKAGE_NAME}"
+          df -h .
+
+      - name: Create and verify archive
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/${PACKAGE_NAME}.tar.gz"
+          tar -czf "${archive}" -C "${RUNNER_TEMP}" "${PACKAGE_NAME}"
+          gzip --test "${archive}"
+          (
+            cd "${RUNNER_TEMP}"
+            sha256sum "${PACKAGE_NAME}.tar.gz" > "${PACKAGE_NAME}.tar.gz.sha256"
+            sha256sum --check "${PACKAGE_NAME}.tar.gz.sha256"
+          )
+          size=$(stat -c '%s' "${archive}")
+          if (( size >= 2147483648 )); then
+            echo "Archive is too large for one GitHub Release asset: ${size} bytes" >&2
+            exit 1
+          fi
+          echo "PACKAGE_ARCHIVE=${archive}" >> "${GITHUB_ENV}"
+          ls -lh "${archive}" "${archive}.sha256"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_tag="offline-ce-v5.0.0-x86_64-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cat > "${RUNNER_TEMP}/offline-release-notes.md" <<'EOF'
+          JumpServer CE v5.0.0 offline installer for Linux x86_64.
+
+          This package combines the verified upstream v5.0.0 installer, the eight images listed in OFFLINE_IMAGES.txt, and the Docker/Compose binaries pinned by the installer. It repackages upstream images; it does not include the dev Core image from this fork.
+
+          Verify the download with: `sha256sum --check jumpserver-ce-v5.0.0-x86_64.tar.gz.sha256`
+          EOF
+          gh release create "${release_tag}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft \
+            --target "${GITHUB_SHA}" \
+            --title 'JumpServer CE v5.0.0 offline x86_64' \
+            --notes-file "${RUNNER_TEMP}/offline-release-notes.md"
+          gh release upload "${release_tag}" \
+            "${PACKAGE_ARCHIVE}" "${PACKAGE_ARCHIVE}.sha256" \
+            --repo "${GITHUB_REPOSITORY}"
+          gh release edit "${release_tag}" --draft=false --repo "${GITHUB_REPOSITORY}"
