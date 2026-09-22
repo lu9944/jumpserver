@@ -108,7 +108,7 @@ if [[ "${mode}" == package ]]; then
     echo "Packaging ${image}"
     docker pull --platform linux/amd64 "${image}"
     image_id=$(docker image inspect --format '{{.ID}}' "${image}")
-    docker save "${image}" | zstd -T0 -3 --quiet --output "${archive}"
+    docker save "${image}" | zstd -T0 -3 --quiet -o "${archive}"
     printf '%s\n' "${image_id}" > "${image_dir}/${basename}.sha256"
     (cd "${image_dir}" && sha256sum "${basename}.zst" > "${basename}.zst.sha256")
 
