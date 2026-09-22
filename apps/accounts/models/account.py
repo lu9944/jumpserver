@@ -88,7 +88,7 @@ class JSONFilterMixin:
 class Account(AbsConnectivity, LabeledMixin, BaseAccount, JSONFilterMixin):
     @transaction.atomic
     def save(self, *args, **kwargs):
-        # Keep the password, history and fixed-credential publication atomic.
+        # Keep the password, history and subscription publication atomic.
         if not self._state.adding:
             type(self).objects.select_for_update().filter(pk=self.pk).first()
         return super().save(*args, **kwargs)
